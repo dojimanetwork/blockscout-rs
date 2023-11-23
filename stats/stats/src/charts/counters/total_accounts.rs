@@ -1,6 +1,10 @@
 use crate::{
-    charts::{cache::Cache, insert::DateValue, updater::ChartFullUpdater},
-    lines::AccountsGrowth,
+    charts::{
+        cache::Cache,
+        insert::{DateValue, DateValueInt},
+        updater::ChartFullUpdater,
+    },
+    lines::{AccountsGrowth, NewAccounts},
     UpdateError,
 };
 use async_trait::async_trait;
@@ -9,11 +13,11 @@ use sea_orm::prelude::*;
 use tokio::sync::Mutex;
 
 pub struct TotalAccounts {
-    cache: Mutex<Cache<Vec<DateValue>>>,
+    cache: Mutex<Cache<Vec<DateValueInt>>>,
 }
 
 impl TotalAccounts {
-    pub fn new(cache: Cache<Vec<DateValue>>) -> Self {
+    pub fn new(cache: Cache<Vec<DateValueInt>>) -> Self {
         Self {
             cache: Mutex::new(cache),
         }
@@ -28,9 +32,13 @@ impl ChartFullUpdater for TotalAccounts {
     ) -> Result<Vec<DateValue>, UpdateError> {
         let mut cache = self.cache.lock().await;
         let data = cache
-            .get_or_update(async move { AccountsGrowth::read_values(blockscout).await })
+            .get_or_update(async move { NewAccounts::read_values(blockscout).await })
             .await?;
-        let data = data.into_iter().max().into_iter().collect();
+        let data = AccountsGrowth::sum_new(data)
+            .into_iter()
+            .max()
+            .into_iter()
+            .collect();
         Ok(data)
     }
 }
@@ -64,6 +72,6 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_total_accounts() {
         let counter = TotalAccounts::new(Cache::default());
-        simple_test_counter("update_total_accounts", counter, "6").await;
+        simple_test_counter("update_total_accounts", counter, "9").await;
     }
 }

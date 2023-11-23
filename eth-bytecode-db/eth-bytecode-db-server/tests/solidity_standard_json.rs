@@ -44,6 +44,7 @@ async fn test_returns_valid_source(service: MockSolidityVerifierService) {
         bytecode_type: BytecodeType::CreationInput.into(),
         compiler_version: "".to_string(),
         input: "".to_string(),
+        metadata: None,
     };
     let source_type = verification::SourceType::Solidity;
     test_cases::test_returns_valid_source(
@@ -66,11 +67,101 @@ async fn test_verify_then_search(service: MockSolidityVerifierService) {
         bytecode_type: BytecodeType::CreationInput.into(),
         compiler_version: "".to_string(),
         input: "".to_string(),
+        metadata: None,
     };
     let source_type = verification::SourceType::Solidity;
     test_cases::test_verify_then_search(
         TEST_SUITE_NAME,
         service,
+        ROUTE,
+        default_request,
+        source_type,
+    )
+    .await;
+}
+
+#[rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(60))]
+#[ignore = "Needs database to run"]
+async fn test_verify_same_source_twice(service: MockSolidityVerifierService) {
+    let default_request = VerifySolidityStandardJsonRequest {
+        bytecode: "".to_string(),
+        bytecode_type: BytecodeType::CreationInput.into(),
+        compiler_version: "".to_string(),
+        input: "".to_string(),
+        metadata: None,
+    };
+    let source_type = verification::SourceType::Solidity;
+    test_cases::test_verify_same_source_twice(
+        TEST_SUITE_NAME,
+        service,
+        ROUTE,
+        default_request,
+        source_type,
+    )
+    .await;
+}
+
+#[rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(60))]
+#[ignore = "Needs database to run"]
+async fn test_search_returns_full_matches_only_if_any() {
+    let default_request = VerifySolidityStandardJsonRequest {
+        bytecode: "".to_string(),
+        bytecode_type: BytecodeType::CreationInput.into(),
+        compiler_version: "".to_string(),
+        input: "".to_string(),
+        metadata: None,
+    };
+    let source_type = verification::SourceType::Solidity;
+    test_cases::test_search_returns_full_matches_only_if_any::<MockSolidityVerifierService, _>(
+        TEST_SUITE_NAME,
+        ROUTE,
+        default_request,
+        source_type,
+    )
+    .await;
+}
+
+#[rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(60))]
+#[ignore = "Needs database to run"]
+async fn test_accepts_partial_verification_metadata_in_input() {
+    let default_request = VerifySolidityStandardJsonRequest {
+        bytecode: "".to_string(),
+        bytecode_type: BytecodeType::CreationInput.into(),
+        compiler_version: "".to_string(),
+        input: "".to_string(),
+        metadata: None,
+    };
+    let source_type = verification::SourceType::Solidity;
+    test_cases::test_accepts_partial_verification_metadata_in_input::<MockSolidityVerifierService, _>(
+        TEST_SUITE_NAME,
+        ROUTE,
+        default_request,
+        source_type,
+    )
+        .await;
+}
+
+#[rstest]
+#[tokio::test]
+#[timeout(std::time::Duration::from_secs(60))]
+#[ignore = "Needs database to run"]
+async fn test_update_source_then_search() {
+    let default_request = VerifySolidityStandardJsonRequest {
+        bytecode: "".to_string(),
+        bytecode_type: BytecodeType::CreationInput.into(),
+        compiler_version: "".to_string(),
+        input: "".to_string(),
+        metadata: None,
+    };
+    let source_type = verification::SourceType::Solidity;
+    test_cases::test_update_source_then_search::<MockSolidityVerifierService, _>(
+        TEST_SUITE_NAME,
         ROUTE,
         default_request,
         source_type,

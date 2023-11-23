@@ -46,6 +46,7 @@ impl TryFrom<VerificationRequest> for vyper::multi_part::VerificationRequest {
             creation_bytecode,
             compiler_version,
             content: value.content.try_into()?,
+            chain_id: Default::default(),
         })
     }
 }
@@ -63,12 +64,12 @@ impl TryFrom<MultiPartFiles> for vyper::multi_part::MultiFileContent {
         let evm_version = if let Some(version) = value.evm_version {
             Some(EvmVersion::from_str(&version).map_err(error::ErrorBadRequest)?)
         } else {
-            // default evm version for vyper
-            Some(EvmVersion::Istanbul)
+            None
         };
 
         Ok(Self {
             sources,
+            interfaces: Default::default(),
             evm_version,
         })
     }
@@ -97,6 +98,9 @@ pub async fn verify(
         VerificationError::Initialization(_) | VerificationError::VersionNotFound(_) => {
             Err(error::ErrorBadRequest(err))
         }
-        VerificationError::Internal(_) => Err(error::ErrorInternalServerError(err)),
+        VerificationError::Internal(_) => {
+            tracing::error!("internal error: {err}");
+            Err(error::ErrorInternalServerError(err))
+        }
     }
 }

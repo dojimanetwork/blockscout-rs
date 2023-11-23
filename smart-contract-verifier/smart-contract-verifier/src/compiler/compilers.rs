@@ -4,7 +4,7 @@ use super::{
     version::Version,
 };
 use crate::metrics::{self, GuardedGauge};
-use ethers_solc::{artifacts::Severity, error::SolcError, CompilerInput, CompilerOutput};
+use ethers_solc::{artifacts::Severity, error::SolcError, CompilerOutput};
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -30,12 +30,14 @@ pub enum Error {
 
 #[async_trait::async_trait]
 pub trait EvmCompiler {
+    type CompilerInput;
+
     async fn compile(
         &self,
         path: &Path,
         ver: &Version,
-        input: &CompilerInput,
-    ) -> Result<CompilerOutput, SolcError>;
+        input: &Self::CompilerInput,
+    ) -> Result<(serde_json::Value, CompilerOutput), SolcError>;
 }
 
 pub struct Compilers<C> {
@@ -65,8 +67,9 @@ where
     pub async fn compile(
         &self,
         compiler_version: &Version,
-        input: &CompilerInput,
-    ) -> Result<CompilerOutput, Error> {
+        input: &C::CompilerInput,
+        chain_id: Option<&str>,
+    ) -> Result<(serde_json::Value, CompilerOutput), Error> {
         let path_result = {
             self.cache
                 .get(self.fetcher.as_ref(), compiler_version)
@@ -77,7 +80,7 @@ where
             res => res?,
         };
 
-        let output = {
+        let (raw, output) = {
             let span = tracing::debug_span!(
                 "compile contract with ethers-solc",
                 ver = compiler_version.to_string()
@@ -88,7 +91,9 @@ where
                 let _wait_gauge_guard = metrics::COMPILATIONS_IN_QUEUE.guarded_inc();
                 self.threads_semaphore.acquire().await?
             };
-            let _compile_timer_guard = metrics::COMPILE_TIME.start_timer();
+            let _compile_timer_guard = metrics::COMPILE_TIME
+                .with_label_values(&[chain_id.unwrap_or_default()])
+                .start_timer();
             let _compile_gauge_guard = metrics::COMPILATIONS_IN_FLIGHT.guarded_inc();
             self.evm_compiler
                 .compile(&path, compiler_version, input)
@@ -111,7 +116,7 @@ where
             return Err(Error::Compilation(errors));
         }
 
-        Ok(output)
+        Ok((raw, output))
     }
 
     pub fn all_versions(&self) -> Vec<Version> {
@@ -143,7 +148,10 @@ where
 mod tests {
     use super::{super::list_fetcher::ListFetcher, *};
     use crate::{consts::DEFAULT_SOLIDITY_COMPILER_LIST, solidity::SolidityCompiler};
-    use ethers_solc::artifacts::{Source, Sources};
+    use ethers_solc::{
+        artifacts::{Source, Sources},
+        CompilerInput,
+    };
     use std::{default::Default, env::temp_dir, str::FromStr};
     use tokio::sync::{OnceCell, Semaphore};
 
@@ -181,12 +189,7 @@ mod tests {
         fn from(input: Input) -> Self {
             let mut compiler_input = CompilerInput {
                 language: "Solidity".to_string(),
-                sources: Sources::from([(
-                    "source.sol".into(),
-                    Source {
-                        content: input.source_code,
-                    },
-                )]),
+                sources: Sources::from([("source.sol".into(), Source::new(input.source_code))]),
                 settings: Default::default(),
             };
             compiler_input.settings.evm_version = None;
@@ -216,8 +219,8 @@ mod tests {
         let input: CompilerInput = Input::with_source_code(source_code.into()).into();
         let version = Version::from_str("v0.8.10+commit.fc410830").expect("Compiler version");
 
-        let result = compilers
-            .compile(&version, &input)
+        let (_raw, result) = compilers
+            .compile(&version, &input, None)
             .await
             .expect("Compilation failed");
         assert!(
@@ -234,8 +237,8 @@ mod tests {
         let input: CompilerInput = Input::with_source_code(source_code.into()).into();
         let version = Version::from_str("v0.5.9+commit.c68bc34e").expect("Compiler version");
 
-        let result = compilers
-            .compile(&version, &input)
+        let (_raw, result) = compilers
+            .compile(&version, &input, None)
             .await
             .expect("Compilation failed");
         assert!(
@@ -253,7 +256,7 @@ mod tests {
         let version = Version::from_str("v0.8.10+commit.fc410830").expect("Compiler version");
 
         let result = compilers
-            .compile(&version, &input)
+            .compile(&version, &input, None)
             .await
             .expect_err("Compilation should fail");
         match result {

@@ -9,6 +9,14 @@ http:
       post: /api/v2/bytecodes/sources:search
       body: "*"
 
+    - selector: blockscout.ethBytecodeDb.v2.Database.SearchSourcifySources
+      post: /api/v2/bytecodes/sources:search-sourcify
+      body: "*"
+
+    - selector: blockscout.ethBytecodeDb.v2.Database.SearchAllSources
+      post: /api/v2/bytecodes/sources:search-all
+      body: "*"
+
     #################### SolidityVerifier ####################
 
     - selector: blockscout.ethBytecodeDb.v2.SolidityVerifier.VerifyMultiPart
@@ -28,6 +36,10 @@ http:
       post: /api/v2/verifier/vyper/sources:verify-multi-part
       body: "*"
 
+    - selector: blockscout.ethBytecodeDb.v2.VyperVerifier.VerifyStandardJson
+      post: /api/v2/verifier/vyper/sources:verify-standard-json
+      body: "*"
+
     - selector: blockscout.ethBytecodeDb.v2.VyperVerifier.ListCompilerVersions
       get: /api/v2/verifier/vyper/versions
 
@@ -35,6 +47,10 @@ http:
 
     - selector: blockscout.ethBytecodeDb.v2.SourcifyVerifier.Verify
       post: /api/v2/verifier/sourcify/sources:verify
+      body: "*"
+
+    - selector: blockscout.ethBytecodeDb.v2.SourcifyVerifier.VerifyFromEtherscan
+      post: /api/v2/verifier/sourcify/sources:verify-from-etherscan
       body: "*"
 
     #################### Health ####################

@@ -1,3 +1,4 @@
+use super::mutex::get_global_update_mutex;
 use crate::ReadError;
 use async_trait::async_trait;
 use entity::{charts, sea_orm_active_enums::ChartType};
@@ -25,10 +26,25 @@ impl From<ReadError> for UpdateError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MissingDatePolicy {
+    FillZero,
+    FillPrevious,
+}
+
 #[async_trait]
 pub trait Chart: Sync {
     fn name(&self) -> &str;
     fn chart_type(&self) -> ChartType;
+    fn missing_date_policy(&self) -> MissingDatePolicy {
+        MissingDatePolicy::FillZero
+    }
+    fn relevant_or_zero(&self) -> bool {
+        false
+    }
+    fn drop_last_point(&self) -> bool {
+        self.chart_type() == ChartType::Line
+    }
 
     async fn create(&self, db: &DatabaseConnection) -> Result<(), DbErr> {
         create_chart(db, self.name().into(), self.chart_type()).await
@@ -40,6 +56,29 @@ pub trait Chart: Sync {
         blockscout: &DatabaseConnection,
         force_full: bool,
     ) -> Result<(), UpdateError>;
+
+    async fn update_with_mutex(
+        &self,
+        db: &DatabaseConnection,
+        blockscout: &DatabaseConnection,
+        force_full: bool,
+    ) -> Result<(), UpdateError> {
+        let name = self.name();
+        let mutex = get_global_update_mutex(name).await;
+        let _permit = {
+            match mutex.try_lock() {
+                Ok(v) => v,
+                Err(_) => {
+                    tracing::warn!(
+                        chart_name = name,
+                        "found locked update mutex, waiting for unlock"
+                    );
+                    mutex.lock().await
+                }
+            }
+        };
+        self.update(db, blockscout, force_full).await
+    }
 }
 
 #[derive(Debug, FromQueryResult)]

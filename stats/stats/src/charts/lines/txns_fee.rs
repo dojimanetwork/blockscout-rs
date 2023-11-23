@@ -31,6 +31,7 @@ impl ChartPartialUpdater for TxnsFee {
                 FROM transactions t
                 JOIN blocks       b ON t.block_hash = b.hash
                 WHERE
+                    b.timestamp != to_timestamp(0) AND
                     DATE(b.timestamp) > $2 AND
                     b.consensus = true
                 GROUP BY DATE(b.timestamp)
@@ -45,7 +46,9 @@ impl ChartPartialUpdater for TxnsFee {
                     (SUM(t.gas_used * t.gas_price) / $1)::FLOAT as value
                 FROM transactions t
                 JOIN blocks       b ON t.block_hash = b.hash
-                WHERE b.consensus = true
+                WHERE
+                    b.timestamp != to_timestamp(0) AND 
+                    b.consensus = true
                 GROUP BY DATE(b.timestamp)
                 "#,
                 vec![ETHER.into()],
@@ -96,10 +99,14 @@ mod tests {
             "update_txns_fee",
             chart,
             vec![
-                ("2022-11-09", "0"),
-                ("2022-11-10", "0.000353888888535"),
-                ("2022-11-11", "0.000778555554777"),
-                ("2022-11-12", "0.000023592592569"),
+                ("2022-11-09", "0.000047185185138"),
+                ("2022-11-10", "0.000495444443949"),
+                ("2022-11-11", "0.000967296295329"),
+                ("2022-11-12", "0.000613407406794"),
+                ("2022-12-01", "0.000684185184501"),
+                ("2023-01-01", "0.000023592592569"),
+                ("2023-02-01", "0.000802148147346"),
+                ("2023-03-01", "0.000023592592569"),
             ],
         )
         .await;

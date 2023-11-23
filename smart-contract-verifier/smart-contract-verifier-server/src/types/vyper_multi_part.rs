@@ -66,14 +66,17 @@ impl TryFrom<VerifyVyperMultiPartRequestWrapper> for VerificationRequest {
             })
             .collect();
 
+        let interfaces: BTreeMap<PathBuf, String> = request
+            .interfaces
+                .into_iter()
+            .map(|(name, content)| (PathBuf::from_str(&name).unwrap(), content)) /* TODO: why unwrap? */
+            .collect();
+
         let evm_version = match request.evm_version {
             Some(version) if version != "default" => {
                 Some(EvmVersion::from_str(&version).map_err(tonic::Status::invalid_argument)?)
             }
-            _ => {
-                // default evm version for vyper
-                Some(EvmVersion::Istanbul)
-            }
+            _ => None,
         };
 
         Ok(Self {
@@ -82,8 +85,10 @@ impl TryFrom<VerifyVyperMultiPartRequestWrapper> for VerificationRequest {
             compiler_version,
             content: MultiFileContent {
                 sources,
+                interfaces,
                 evm_version,
             },
+            chain_id: request.metadata.and_then(|metadata| metadata.chain_id),
         })
     }
 }
@@ -91,6 +96,7 @@ impl TryFrom<VerifyVyperMultiPartRequestWrapper> for VerificationRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::VerificationMetadata;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -100,8 +106,12 @@ mod tests {
             bytecode_type: BytecodeType::CreationInput.into(),
             compiler_version: "0.3.7+commit.6020b8bb".to_string(),
             source_files: BTreeMap::from([("source_path".into(), "source_content".into())]),
+            interfaces: BTreeMap::from([("interface_path".into(), "interface_content".into())]),
             evm_version: Some("byzantium".to_string()),
-            optimizations: None,
+            metadata: Some(VerificationMetadata {
+                chain_id: Some("1".into()),
+                contract_address: Some("0xcafecafecafecafecafecafecafecafecafecafe".into()),
+            }),
         };
 
         let verification_request: VerificationRequest =
@@ -115,23 +125,26 @@ mod tests {
             compiler_version: Version::from_str("0.3.7+commit.6020b8bb").unwrap(),
             content: MultiFileContent {
                 sources: BTreeMap::from([("source_path".into(), "source_content".into())]),
+                interfaces: BTreeMap::from([("interface_path".into(), "interface_content".into())]),
                 evm_version: Some(EvmVersion::Byzantium),
             },
+            chain_id: Some("1".into()),
         };
 
         assert_eq!(expected, verification_request);
     }
 
     #[test]
-    // 'default' should result in "EvmVersion::Istanbul"
+    // 'default' should result in None
     fn default_evm_version() {
         let request = VerifyVyperMultiPartRequest {
             bytecode: "".to_string(),
             bytecode_type: BytecodeType::CreationInput.into(),
             compiler_version: "v0.8.17+commit.8df45f5f".to_string(),
             source_files: Default::default(),
+            interfaces: Default::default(),
             evm_version: Some("default".to_string()),
-            optimizations: None,
+            metadata: None,
         };
 
         let verification_request: VerificationRequest =
@@ -140,9 +153,8 @@ mod tests {
                 .expect("Try_into verification request failed");
 
         assert_eq!(
-            Some(EvmVersion::Istanbul),
-            verification_request.content.evm_version,
-            "'default' should result in 'EvmVersion::Istanbul'"
+            None, verification_request.content.evm_version,
+            "'default' should result in 'None'"
         )
     }
 
@@ -154,8 +166,9 @@ mod tests {
             bytecode_type: BytecodeType::CreationInput.into(),
             compiler_version: "v0.8.17+commit.8df45f5f".to_string(),
             source_files: Default::default(),
+            interfaces: Default::default(),
             evm_version: None,
-            optimizations: None,
+            metadata: None,
         };
 
         let verification_request: VerificationRequest =
@@ -164,9 +177,31 @@ mod tests {
                 .expect("Try_into verification request failed");
 
         assert_eq!(
-            Some(EvmVersion::Istanbul),
-            verification_request.content.evm_version,
-            "Absent evm_version should result in 'EvmVersion::Istanbul'"
+            None, verification_request.content.evm_version,
+            "Absent evm_version should result in 'None'"
+        )
+    }
+
+    #[test]
+    fn empty_metadata() {
+        let request = VerifyVyperMultiPartRequest {
+            bytecode: "".to_string(),
+            bytecode_type: BytecodeType::CreationInput.into(),
+            compiler_version: "v0.8.17+commit.8df45f5f".to_string(),
+            source_files: Default::default(),
+            interfaces: Default::default(),
+            evm_version: None,
+            metadata: None,
+        };
+
+        let verification_request: VerificationRequest =
+            <VerifyVyperMultiPartRequestWrapper>::from(request)
+                .try_into()
+                .expect("Try_into verification request failed");
+
+        assert_eq!(
+            None, verification_request.chain_id,
+            "Absent verification metadata should result in absent chain id"
         )
     }
 }

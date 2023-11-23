@@ -5,7 +5,7 @@ use super::{
         smart_contract_verifier::{BytecodeType, VerifySolidityMultiPartRequest},
         types::{Source, VerificationRequest, VerificationType},
     },
-    process_verify_response, ProcessResponseAction,
+    process_verify_response, EthBytecodeDbAction, VerifierAllianceDbAction,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -28,6 +28,7 @@ impl From<VerificationRequest<MultiPartFiles>> for VerifySolidityMultiPartReques
             evm_version: request.content.evm_version,
             optimization_runs: request.content.optimization_runs,
             libraries: request.content.libraries,
+            metadata: request.metadata.map(|metadata| metadata.into()),
         }
     }
 }
@@ -36,10 +37,12 @@ pub async fn verify(
     mut client: Client,
     request: VerificationRequest<MultiPartFiles>,
 ) -> Result<Source, Error> {
+    let is_authorized = request.is_authorized;
     let bytecode_type = request.bytecode_type;
     let raw_request_bytecode = hex::decode(request.bytecode.clone().trim_start_matches("0x"))
         .map_err(|err| Error::InvalidArgument(format!("invalid bytecode: {err}")))?;
     let verification_settings = serde_json::json!(&request);
+    let verification_metadata = request.metadata.clone();
 
     let request: VerifySolidityMultiPartRequest = request.into();
     let response = client
@@ -49,22 +52,32 @@ pub async fn verify(
         .map_err(Error::from)?
         .into_inner();
 
+    let verifier_alliance_db_action = VerifierAllianceDbAction::from_db_client_and_metadata(
+        client.alliance_db_client.as_deref(),
+        verification_metadata.clone(),
+        is_authorized,
+    );
     process_verify_response(
-        &client.db_client,
         response,
-        ProcessResponseAction::SaveData {
+        EthBytecodeDbAction::SaveData {
+            db_client: &client.db_client,
             bytecode_type,
             raw_request_bytecode,
             verification_settings,
             verification_type: VerificationType::MultiPartFiles,
+            verification_metadata,
         },
+        verifier_alliance_db_action,
     )
     .await
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{super::super::types, *};
+    use super::{
+        super::super::{smart_contract_verifier, types},
+        *,
+    };
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -82,6 +95,12 @@ mod tests {
                 optimization_runs: Some(200),
                 libraries: BTreeMap::from([("lib1".into(), "0xcafe".into())]),
             },
+            metadata: Some(types::VerificationMetadata {
+                chain_id: Some(1),
+                contract_address: Some(bytes::Bytes::from_static(&[1u8; 20])),
+                ..Default::default()
+            }),
+            is_authorized: false,
         };
         let expected = VerifySolidityMultiPartRequest {
             bytecode: "0x1234".to_string(),
@@ -94,6 +113,10 @@ mod tests {
             evm_version: Some("london".to_string()),
             optimization_runs: Some(200),
             libraries: BTreeMap::from([("lib1".into(), "0xcafe".into())]),
+            metadata: Some(smart_contract_verifier::VerificationMetadata {
+                chain_id: Some("1".to_string()),
+                contract_address: Some("0x0101010101010101010101010101010101010101".to_string()),
+            }),
         };
         assert_eq!(
             expected,
@@ -117,6 +140,12 @@ mod tests {
                 optimization_runs: Some(200),
                 libraries: BTreeMap::from([("lib1".into(), "0xcafe".into())]),
             },
+            metadata: Some(types::VerificationMetadata {
+                chain_id: Some(1),
+                contract_address: Some(bytes::Bytes::from_static(&[1u8; 20])),
+                ..Default::default()
+            }),
+            is_authorized: false,
         };
         let expected = VerifySolidityMultiPartRequest {
             bytecode: "0x1234".to_string(),
@@ -129,6 +158,10 @@ mod tests {
             evm_version: Some("london".to_string()),
             optimization_runs: Some(200),
             libraries: BTreeMap::from([("lib1".into(), "0xcafe".into())]),
+            metadata: Some(smart_contract_verifier::VerificationMetadata {
+                chain_id: Some("1".to_string()),
+                contract_address: Some("0x0101010101010101010101010101010101010101".to_string()),
+            }),
         };
         assert_eq!(
             expected,

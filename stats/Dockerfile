@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:0.1.47-rust-1.65-buster as chef
+FROM lukemathwalker/cargo-chef:0.1.62-rust-1.72-buster as chef
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y curl wget unzip
@@ -41,6 +41,6 @@ COPY --from=build /app/target/release/stats-server /app/stats-server
 RUN chown -R $APP_USER:$APP_USER /app
 USER app
 
-COPY ./config/charts.toml ./config/charts.toml 
+COPY ./config/charts.json ./config/charts.json
 
 CMD ["./stats-server"]

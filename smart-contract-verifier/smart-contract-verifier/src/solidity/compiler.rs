@@ -14,16 +14,20 @@ impl SolidityCompiler {
 
 #[async_trait::async_trait]
 impl EvmCompiler for SolidityCompiler {
+    type CompilerInput = ethers_solc::CompilerInput;
+
     async fn compile(
         &self,
         path: &Path,
         ver: &Version,
-        input: &ethers_solc::CompilerInput,
-    ) -> Result<CompilerOutput, SolcError> {
+        input: &Self::CompilerInput,
+    ) -> Result<(serde_json::Value, CompilerOutput), SolcError> {
         if ver.version() < &semver::Version::new(0, 4, 11) {
-            solc_cli::compile_using_cli(path, input).await
+            let output = solc_cli::compile_using_cli(path, input).await?;
+            Ok((serde_json::to_value(&output).unwrap(), output))
         } else {
-            Solc::from(path).async_compile(input).await
+            let raw = Solc::from(path).async_compile_output(input).await?;
+            Ok((serde_json::from_slice(&raw)?, serde_json::from_slice(&raw)?))
         }
     }
 }

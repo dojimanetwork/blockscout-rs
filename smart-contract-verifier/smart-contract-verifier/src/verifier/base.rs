@@ -25,11 +25,15 @@ impl<T> From<LocalBytecode<T>> for LocalBytecodeParts {
 pub struct VerificationSuccess {
     pub file_path: String,
     pub contract_name: String,
-    pub abi: Option<ethabi::Contract>,
+    pub abi: Option<serde_json::Value>,
     pub constructor_args: Option<DisplayBytes>,
 
     pub local_bytecode_parts: LocalBytecodeParts,
     pub match_type: MatchType,
+
+    pub compilation_artifacts: serde_json::Value,
+    pub creation_input_artifacts: serde_json::Value,
+    pub deployed_bytecode_artifacts: serde_json::Value,
 }
 
 /// Combine different verifiers

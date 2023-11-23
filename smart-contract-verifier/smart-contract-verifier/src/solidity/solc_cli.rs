@@ -384,7 +384,7 @@ mod tests {
         let expected_args = types::InputArgs {
             optimize: false,
             optimize_runs: Some(200),
-            libs: BTreeMap::from_iter(vec![
+            libs: BTreeMap::from_iter([
                 (
                     "MyLib".to_string(),
                     "0x1234567890123456789012345678901234567890".to_string(),
@@ -445,7 +445,7 @@ mod tests {
             let expected_abi = serde_json::to_value(&initial_contract.abi).unwrap();
             assert_eq!(abi, expected_abi);
 
-            for (name, actual_bytecode, expected_bytecode) in vec![
+            for (name, actual_bytecode, expected_bytecode) in [
                 (
                     "creation bytecode",
                     contract.get_bytecode_bytes(),
@@ -487,12 +487,7 @@ mod tests {
     }
 
     fn source(file: &str, content: &str) -> (PathBuf, Source) {
-        (
-            file.into(),
-            Source {
-                content: content.to_string(),
-            },
-        )
+        (file.into(), Source::new(content))
     }
 
     #[tokio::test]
@@ -515,7 +510,7 @@ mod tests {
             let expected_names = HashSet::from_iter(["Main".into(), "A".into(), "B".into()]);
             assert_eq!(names, expected_names);
 
-            for sources in vec![
+            for sources in [
                 BTreeMap::from_iter([source("main.sol", "")]),
                 BTreeMap::from_iter([source("main.sol", "some string")]),
             ] {

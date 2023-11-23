@@ -30,7 +30,10 @@ impl ChartPartialUpdater for AverageGasPrice {
                         (AVG(gas_price) / $1)::float as value
                     FROM transactions
                     JOIN blocks ON transactions.block_hash = blocks.hash
-                    WHERE date(blocks.timestamp) > $2 AND blocks.consensus = true
+                    WHERE 
+                        blocks.timestamp != to_timestamp(0) AND
+                        date(blocks.timestamp) > $2 AND
+                        blocks.consensus = true
                     GROUP BY date
                     "#,
                 vec![GWEI.into(), row.date.into()],
@@ -43,7 +46,9 @@ impl ChartPartialUpdater for AverageGasPrice {
                         (AVG(gas_price) / $1)::float as value
                     FROM transactions
                     JOIN blocks ON transactions.block_hash = blocks.hash
-                    WHERE blocks.consensus = true
+                    WHERE 
+                        blocks.timestamp != to_timestamp(0) AND
+                        blocks.consensus = true
                     GROUP BY date
                     "#,
                 vec![GWEI.into()],
@@ -92,10 +97,14 @@ mod tests {
             "update_average_gas_price",
             chart,
             vec![
-                ("2022-11-09", "0"),
-                ("2022-11-10", "2.8086419725"),
-                ("2022-11-11", "6.1790123395"),
-                ("2022-11-12", "1.123456789"),
+                ("2022-11-09", "0.4493827156"),
+                ("2022-11-10", "1.96604938075"),
+                ("2022-11-11", "3.2901234535"),
+                ("2022-11-12", "5.8419753028"),
+                ("2022-12-01", "6.5160493762"),
+                ("2023-01-01", "1.123456789"),
+                ("2023-02-01", "9.5493827065"),
+                ("2023-03-01", "1.123456789"),
             ],
         )
         .await;

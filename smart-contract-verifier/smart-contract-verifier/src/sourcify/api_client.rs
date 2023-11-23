@@ -8,6 +8,7 @@ use std::{num::NonZeroU32, sync::Arc, time::Duration};
 pub struct SourcifyApiClient {
     host: Url,
     reqwest_client: ClientWithMiddleware,
+    lib_client: sourcify::Client,
     middleware: Option<Arc<dyn Middleware<Success>>>,
 }
 
@@ -18,6 +19,12 @@ impl SourcifyApiClient {
         request_timeout: u64,
         verification_attempts: NonZeroU32,
     ) -> Result<Self, reqwest::Error> {
+        let lib_client = sourcify::ClientBuilder::default()
+            .try_base_url(host.as_str())
+            .unwrap()
+            .max_retries(verification_attempts.get())
+            .build();
+
         let retry_policy =
             ExponentialBackoff::builder().build_with_max_retries(verification_attempts.get());
         let reqwest_client = reqwest::Client::builder()
@@ -30,8 +37,13 @@ impl SourcifyApiClient {
         Ok(Self {
             host,
             reqwest_client,
+            lib_client,
             middleware: None,
         })
+    }
+
+    pub fn lib_client(&self) -> &sourcify::Client {
+        &self.lib_client
     }
 
     /// Convenience method to attach middleware.

@@ -31,8 +31,8 @@ impl ChartFullUpdater for AverageBlockTime {
                     EXTRACT(
                         EPOCH FROM timestamp - lag(timestamp) OVER (ORDER BY timestamp)
                     ) as diff
-                FROM "blocks"
-                WHERE consensus = true
+                FROM blocks b
+                WHERE b.timestamp != to_timestamp(0) AND consensus = true
             ) t
             "#,
             vec![],
@@ -76,6 +76,6 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_average_block_time() {
         let counter = AverageBlockTime::default();
-        simple_test_counter("update_average_block_time", counter, "21600.125").await;
+        simple_test_counter("update_average_block_time", counter, "802200.0833333334").await;
     }
 }

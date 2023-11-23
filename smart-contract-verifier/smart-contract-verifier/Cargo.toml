@@ -9,12 +9,13 @@ keywords = ["ethereum", "web3", "solidity"]
 [dependencies]
 anyhow = "1.0"
 async-trait = "0.1"
-blockscout-display-bytes = { version = "1.0", features = ["ethers-core"] }
+blockscout-display-bytes = { version = "1.0" }
 bytes = "1.2"
 chrono = "0.4"
 cron = "0.11"
 ethabi = "18.0"
-ethers-solc = { version = "1.0", features = ["async"] }
+ethers-core = "2.0.10"
+ethers-solc = { version = "2.0.6", features = ["async"] }
 futures = "0.3"
 hex = "0.4"
 lazy_static = "1"
@@ -33,12 +34,13 @@ serde_json = "1"
 serde_with = "2"
 sha2 = "0.10"
 solidity-metadata = "1.0"
+sourcify = { git = "https://github.com/blockscout/blockscout-rs", rev = "34827ae" }
 sscanf = "0.3"
 tempfile = "3.3"
 thiserror = "1.0"
 tokio = { version = "1", features = ["macros"] }
 tracing = "0.1"
-url = { version = "2.2", features = ["serde"] }
+url = { version = "2.4", features = ["serde"] }
 
 [dev-dependencies]
 const_format = "0.2"
@@ -48,4 +50,5 @@ quick-xml = { version = "0.24", features = ["serialize"] }
 rand = "0.8"
 rstest = "0.15"
 tempfile = "3.3"
+tokio = { version = "*", features = ["sync", "parking_lot"] }
 wiremock = "0.5"

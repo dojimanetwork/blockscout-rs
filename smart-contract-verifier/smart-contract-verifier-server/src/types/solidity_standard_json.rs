@@ -1,3 +1,4 @@
+use super::StandardJsonParseError;
 use crate::proto::{BytecodeType, VerifySolidityStandardJsonRequest};
 use anyhow::anyhow;
 use blockscout_display_bytes::Bytes as DisplayBytes;
@@ -8,15 +9,6 @@ use smart_contract_verifier::{
     Version,
 };
 use std::{ops::Deref, str::FromStr};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-pub enum ParseError {
-    #[error("content is not valid standard json: {0}")]
-    InvalidContent(#[from] serde_json::Error),
-    #[error("{0}")]
-    BadRequest(#[from] anyhow::Error),
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct VerifySolidityStandardJsonRequestWrapper(VerifySolidityStandardJsonRequest);
@@ -46,7 +38,7 @@ impl VerifySolidityStandardJsonRequestWrapper {
 }
 
 impl TryFrom<VerifySolidityStandardJsonRequestWrapper> for VerificationRequest {
-    type Error = ParseError;
+    type Error = StandardJsonParseError;
 
     fn try_from(request: VerifySolidityStandardJsonRequestWrapper) -> Result<Self, Self::Error> {
         let request = request.into_inner();
@@ -55,7 +47,7 @@ impl TryFrom<VerifySolidityStandardJsonRequestWrapper> for VerificationRequest {
             .map_err(|err| anyhow!("Invalid deployed bytecode: {:?}", err))?
             .0;
         let (creation_bytecode, deployed_bytecode) = match request.bytecode_type() {
-            BytecodeType::Unspecified => Err(ParseError::BadRequest(anyhow!(
+            BytecodeType::Unspecified => Err(StandardJsonParseError::BadRequest(anyhow!(
                 "Bytecode type is unspecified"
             )))?,
             BytecodeType::CreationInput => (Some(bytecode), bytes::Bytes::new()),
@@ -71,6 +63,7 @@ impl TryFrom<VerifySolidityStandardJsonRequestWrapper> for VerificationRequest {
             creation_bytecode,
             compiler_version,
             content: StandardJsonContent { input },
+            chain_id: request.metadata.and_then(|metadata| metadata.chain_id),
         })
     }
 }
@@ -78,6 +71,7 @@ impl TryFrom<VerifySolidityStandardJsonRequestWrapper> for VerificationRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::VerificationMetadata;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -88,7 +82,12 @@ mod tests {
             bytecode: "0x1234".to_string(),
             bytecode_type: BytecodeType::CreationInput.into(),
             compiler_version: "v0.8.17+commit.8df45f5f".to_string(),
-            input: "{\"language\": \"Solidity\", \"sources\": {\"./src/contracts/Foo.sol\": {\"content\": \"pragma solidity ^0.8.2;\\n\\ncontract Foo {\\n    function bar() external pure returns (uint256) {\\n        return 42;\\n    }\\n}\\n\"}}, \"settings\": {\"metadata\": {\"useLiteralContent\": true}, \"optimizer\": {\"enabled\": true, \"runs\": 200}, \"outputSelection\": {\"*\": {\"*\": [\"abi\", \"evm.bytecode\", \"evm.deployedBytecode\", \"evm.methodIdentifiers\"], \"\": [\"id\", \"ast\"]}}}}".to_string()
+            input: "{\"language\": \"Solidity\", \"sources\": {\"./src/contracts/Foo.sol\": {\"content\": \"pragma solidity ^0.8.2;\\n\\ncontract Foo {\\n    function bar() external pure returns (uint256) {\\n        return 42;\\n    }\\n}\\n\"}}, \"settings\": {\"metadata\": {\"useLiteralContent\": true}, \"optimizer\": {\"enabled\": true, \"runs\": 200}, \"outputSelection\": {\"*\": {\"*\": [\"abi\", \"evm.bytecode\", \"evm.deployedBytecode\", \"evm.methodIdentifiers\"], \"\": [\"id\", \"ast\"]}}}}".to_string(),
+            metadata: Some(VerificationMetadata {
+                chain_id: Some("1".into()),
+                contract_address: Some("0xcafecafecafecafecafecafecafecafecafecafe".into())
+            }),
+            post_actions: vec![],
         };
         let input: CompilerInput = serde_json::from_str(&request.input).unwrap();
 
@@ -102,6 +101,7 @@ mod tests {
             deployed_bytecode: DisplayBytes::from_str("").unwrap().0,
             compiler_version: Version::from_str("v0.8.17+commit.8df45f5f").unwrap(),
             content: StandardJsonContent { input },
+            chain_id: Some("1".into()),
         };
 
         // We cannot compare requests directly, as CompilerInput does not implement PartialEq
@@ -140,5 +140,27 @@ mod tests {
             expected.deployed_bytecode, verification_request.deployed_bytecode,
             "Invalid deployed bytecode when deployed bytecode provided"
         );
+    }
+
+    #[test]
+    fn empty_metadata() {
+        let request = VerifySolidityStandardJsonRequest {
+            bytecode: "".to_string(),
+            bytecode_type: BytecodeType::CreationInput.into(),
+            compiler_version: "v0.8.17+commit.8df45f5f".to_string(),
+            input: "{\"language\": \"Solidity\", \"sources\": {\"./src/contracts/Foo.sol\": {\"content\": \"pragma solidity ^0.8.2;\\n\\ncontract Foo {\\n    function bar() external pure returns (uint256) {\\n        return 42;\\n    }\\n}\\n\"}}, \"settings\": {\"metadata\": {\"useLiteralContent\": true}, \"optimizer\": {\"enabled\": true, \"runs\": 200}, \"outputSelection\": {\"*\": {\"*\": [\"abi\", \"evm.bytecode\", \"evm.deployedBytecode\", \"evm.methodIdentifiers\"], \"\": [\"id\", \"ast\"]}}}}".to_string(),
+            metadata: None,
+            post_actions: vec![],
+        };
+
+        let verification_request: VerificationRequest =
+            <VerifySolidityStandardJsonRequestWrapper>::from(request)
+                .try_into()
+                .expect("Try_into verification request failed");
+
+        assert_eq!(
+            None, verification_request.chain_id,
+            "Absent verification metadata should result in absent chain id"
+        )
     }
 }

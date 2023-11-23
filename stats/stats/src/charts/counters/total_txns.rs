@@ -30,7 +30,8 @@ impl ChartDependentUpdater<NewTxns> for TotalTxns {
     }
 
     async fn get_values(&self, parent_data: Vec<DateValue>) -> Result<Vec<DateValue>, UpdateError> {
-        parse_and_sum::<i64>(parent_data, self.name(), self.parent.name())
+        let sum = parse_and_sum::<i64>(parent_data, self.name(), self.parent.name())?;
+        Ok(sum.into_iter().collect())
     }
 }
 
@@ -68,6 +69,6 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_total_txns() {
         let counter = TotalTxns::new(Default::default());
-        simple_test_counter("update_total_txns", counter, "16").await;
+        simple_test_counter("update_total_txns", counter, "47").await;
     }
 }

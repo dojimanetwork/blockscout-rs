@@ -84,6 +84,7 @@ impl TryFrom<VerifySolidityMultiPartRequestWrapper> for VerificationRequest {
                 optimization_runs: request.optimization_runs.map(|i| i as usize),
                 contract_libraries: Some(request.libraries.into_iter().collect()),
             },
+            chain_id: request.metadata.and_then(|metadata| metadata.chain_id),
         })
     }
 }
@@ -91,6 +92,7 @@ impl TryFrom<VerifySolidityMultiPartRequestWrapper> for VerificationRequest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::proto::VerificationMetadata;
     use pretty_assertions::assert_eq;
 
     #[test]
@@ -105,6 +107,11 @@ mod tests {
             evm_version: Some("london".to_string()),
             optimization_runs: Some(200),
             libraries: BTreeMap::from([("Lib".into(), "0xcafe".into())]),
+            metadata: Some(VerificationMetadata {
+                chain_id: Some("1".into()),
+                contract_address: Some("0xcafecafecafecafecafecafecafecafecafecafe".into()),
+            }),
+            post_actions: vec![],
         };
 
         let mut expected = VerificationRequest {
@@ -117,6 +124,7 @@ mod tests {
                 optimization_runs: Some(200),
                 contract_libraries: Some(BTreeMap::from([("Lib".into(), "0xcafe".into())])),
             },
+            chain_id: Some("1".into()),
         };
 
         let verification_request: VerificationRequest =
@@ -148,6 +156,8 @@ mod tests {
             evm_version: Some("default".to_string()),
             optimization_runs: None,
             libraries: Default::default(),
+            metadata: None,
+            post_actions: vec![],
         };
 
         let verification_request: VerificationRequest =
@@ -172,6 +182,8 @@ mod tests {
             evm_version: None,
             optimization_runs: None,
             libraries: Default::default(),
+            metadata: None,
+            post_actions: vec![],
         };
 
         let verification_request: VerificationRequest =
@@ -182,6 +194,31 @@ mod tests {
         assert_eq!(
             None, verification_request.content.evm_version,
             "Absent evm_version should result in `None`"
+        )
+    }
+
+    #[test]
+    fn empty_metadata() {
+        let request = VerifySolidityMultiPartRequest {
+            bytecode: "".to_string(),
+            bytecode_type: BytecodeType::CreationInput.into(),
+            compiler_version: "v0.8.17+commit.8df45f5f".to_string(),
+            source_files: Default::default(),
+            evm_version: None,
+            optimization_runs: None,
+            libraries: Default::default(),
+            metadata: None,
+            post_actions: vec![],
+        };
+
+        let verification_request: VerificationRequest =
+            <VerifySolidityMultiPartRequestWrapper>::from(request)
+                .try_into()
+                .expect("Try_into verification request failed");
+
+        assert_eq!(
+            None, verification_request.chain_id,
+            "Absent verification metadata should result in chain_id=None"
         )
     }
 }

@@ -80,7 +80,7 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_total_blocks_recurrent() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (db, blockscout) = init_db_all("update_total_blocks_recurrent", None).await;
+        let (db, blockscout) = init_db_all("update_total_blocks_recurrent").await;
         let updater = TotalBlocks::default();
 
         updater.create(&db).await.unwrap();
@@ -91,22 +91,22 @@ mod tests {
             value: Set(1.to_string()),
             ..Default::default()
         })
-        .exec(&db)
+        .exec(&db as &DatabaseConnection)
         .await
         .unwrap();
 
-        fill_mock_blockscout_data(&blockscout, "2022-11-11").await;
+        fill_mock_blockscout_data(&blockscout, "2023-03-01").await;
 
         updater.update(&db, &blockscout, true).await.unwrap();
         let data = get_counters(&db).await.unwrap();
-        assert_eq!("8", data[updater.name()]);
+        assert_eq!("13", data[updater.name()].value);
     }
 
     #[tokio::test]
     #[ignore = "needs database to run"]
     async fn update_total_blocks_fresh() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (db, blockscout) = init_db_all("update_total_blocks_fresh", None).await;
+        let (db, blockscout) = init_db_all("update_total_blocks_fresh").await;
         let updater = TotalBlocks::default();
 
         updater.create(&db).await.unwrap();
@@ -115,14 +115,14 @@ mod tests {
 
         updater.update(&db, &blockscout, true).await.unwrap();
         let data = get_counters(&db).await.unwrap();
-        assert_eq!("9", data[updater.name()]);
+        assert_eq!("9", data[updater.name()].value);
     }
 
     #[tokio::test]
     #[ignore = "needs database to run"]
     async fn update_total_blocks_last() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (db, blockscout) = init_db_all("update_total_blocks_last", None).await;
+        let (db, blockscout) = init_db_all("update_total_blocks_last").await;
         let updater = TotalBlocks::default();
 
         updater.create(&db).await.unwrap();
@@ -133,14 +133,14 @@ mod tests {
             value: Set(1.to_string()),
             ..Default::default()
         })
-        .exec(&db)
+        .exec(&db as &DatabaseConnection)
         .await
         .unwrap();
 
-        fill_mock_blockscout_data(&blockscout, "2022-11-11").await;
+        fill_mock_blockscout_data(&blockscout, "2023-03-01").await;
 
         updater.update(&db, &blockscout, true).await.unwrap();
         let data = get_counters(&db).await.unwrap();
-        assert_eq!("8", data[updater.name()]);
+        assert_eq!("13", data[updater.name()].value);
     }
 }

@@ -1,11 +1,14 @@
-use super::client::Client;
+use super::{client::Client, types::Success};
 use crate::{
     compiler::Version,
-    verifier::{ContractVerifier, Error, Success},
+    verifier::{ContractVerifier, Error},
 };
 use bytes::Bytes;
 use ethers_solc::{
-    artifacts::{BytecodeHash, Libraries, Settings, SettingsMetadata, Source, Sources},
+    artifacts::{
+        output_selection::OutputSelection, BytecodeHash, Libraries, Settings, SettingsMetadata,
+        Source, Sources,
+    },
     CompilerInput, EvmVersion,
 };
 use semver::VersionReq;
@@ -18,6 +21,10 @@ pub struct VerificationRequest {
     pub compiler_version: Version,
 
     pub content: MultiFileContent,
+
+    // Required for the metrics. Has no functional meaning.
+    // In case if chain_id has not been provided, results in empty string.
+    pub chain_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +40,9 @@ impl From<MultiFileContent> for Vec<CompilerInput> {
         let mut settings = Settings::default();
         settings.optimizer.enabled = Some(content.optimization_runs.is_some());
         settings.optimizer.runs = content.optimization_runs;
+
+        settings.output_selection = OutputSelection::complete_output_selection();
+
         if let Some(libs) = content.contract_libraries {
             // we have to know filename for library, but we don't know,
             // so we assume that every file MAY contains all libraries
@@ -48,9 +58,9 @@ impl From<MultiFileContent> for Vec<CompilerInput> {
         let sources: Sources = content
             .sources
             .into_iter()
-            .map(|(name, content)| (name, Source { content }))
+            .map(|(name, content)| (name, Source::new(content)))
             .collect();
-        let inputs: Vec<_> = CompilerInput::with_sources(sources)
+        let inputs: Vec<_> = input_from_sources(sources)
             .into_iter()
             .map(|input| input.settings(settings.clone()))
             .collect();
@@ -66,6 +76,7 @@ pub async fn verify(client: Arc<Client>, request: VerificationRequest) -> Result
         &compiler_version,
         request.creation_bytecode,
         request.deployed_bytecode,
+        request.chain_id,
     )?;
 
     let compiler_inputs: Vec<CompilerInput> = request.content.into();
@@ -81,10 +92,11 @@ pub async fn verify(client: Arc<Client>, request: VerificationRequest) -> Result
 
             // If any error, it is uncorrectable and should be returned immediately, otherwise
             // we allow middlewares to process success and only then return it to the caller
-            let success = result?;
+            let success = Success::from((compiler_input, result?));
             if let Some(middleware) = client.middleware() {
                 middleware.call(&success).await;
             }
+
             return Ok(success);
         }
     }
@@ -115,6 +127,37 @@ fn settings_metadata(compiler_version: &Version) -> Vec<Option<SettingsMetadata>
             .map(|hash| Some(SettingsMetadata::from(hash)))
             .into()
     }
+}
+
+const SOLIDITY: &str = "Solidity";
+const YUL: &str = "Yul";
+
+fn input_from_sources(sources: Sources) -> Vec<CompilerInput> {
+    let mut solidity_sources = BTreeMap::new();
+    let mut yul_sources = BTreeMap::new();
+    for (path, source) in sources {
+        if path.to_str().unwrap_or_default().ends_with(".yul") {
+            yul_sources.insert(path, source);
+        } else {
+            solidity_sources.insert(path, source);
+        }
+    }
+    let mut res = Vec::new();
+    if !solidity_sources.is_empty() {
+        res.push(CompilerInput {
+            language: SOLIDITY.to_string(),
+            sources: solidity_sources,
+            settings: Default::default(),
+        });
+    }
+    if !yul_sources.is_empty() {
+        res.push(CompilerInput {
+            language: YUL.to_string(),
+            sources: yul_sources,
+            settings: Default::default(),
+        });
+    }
+    res
 }
 
 #[cfg(test)]
@@ -154,7 +197,7 @@ mod tests {
                 "some_address".into(),
             )])),
         };
-        let expected = r#"{"language":"Solidity","sources":{"source.sol":{"content":"pragma"}},"settings":{"optimizer":{"enabled":true,"runs":200},"outputSelection":{"*":{"":["ast"],"*":["abi","evm.bytecode","evm.deployedBytecode","evm.methodIdentifiers"]}},"evmVersion":"london","libraries":{"source.sol":{"some_library":"some_address"}}}}"#;
+        let expected = r#"{"language":"Solidity","sources":{"source.sol":{"content":"pragma"}},"settings":{"optimizer":{"enabled":true,"runs":200},"outputSelection":{"*":{"":["*"],"*":["*"]}},"evmVersion":"london","libraries":{"source.sol":{"some_library":"some_address"}}}}"#;
         test_to_input(multi_part, vec![expected]);
         let multi_part = MultiFileContent {
             sources: sources(&[("source.sol", "")]),
@@ -162,20 +205,24 @@ mod tests {
             optimization_runs: None,
             contract_libraries: None,
         };
-        let expected = r#"{"language":"Solidity","sources":{"source.sol":{"content":""}},"settings":{"optimizer":{"enabled":false},"outputSelection":{"*":{"":["ast"],"*":["abi","evm.bytecode","evm.deployedBytecode","evm.methodIdentifiers"]}},"evmVersion":"spuriousDragon","libraries":{}}}"#;
+        let expected = r#"{"language":"Solidity","sources":{"source.sol":{"content":""}},"settings":{"optimizer":{"enabled":false},"outputSelection":{"*":{"":["*"],"*":["*"]}},"evmVersion":"spuriousDragon","libraries":{}}}"#;
         test_to_input(multi_part, vec![expected]);
     }
 
     #[test]
     fn yul_and_solidity_to_inputs() {
         let multi_part = MultiFileContent {
-            sources: sources(&[("source.sol", "pragma"), ("source2.yul", "object \"A\" {}")]),
+            sources: sources(&[
+                ("source.sol", "pragma"),
+                ("source2.yul", "object \"A\" {}"),
+                (".yul", "object \"A\" {}"),
+            ]),
             evm_version: Some(EvmVersion::London),
             optimization_runs: Some(200),
             contract_libraries: None,
         };
-        let expected_solidity = r#"{"language":"Solidity","sources":{"source.sol":{"content":"pragma"}},"settings":{"optimizer":{"enabled":true,"runs":200},"outputSelection":{"*":{"":["ast"],"*":["abi","evm.bytecode","evm.deployedBytecode","evm.methodIdentifiers"]}},"evmVersion":"london","libraries":{}}}"#;
-        let expected_yul = r#"{"language":"Yul","sources":{"source2.yul":{"content":"object \"A\" {}"}},"settings":{"optimizer":{"enabled":true,"runs":200},"outputSelection":{"*":{"":["ast"],"*":["abi","evm.bytecode","evm.deployedBytecode","evm.methodIdentifiers"]}},"evmVersion":"london","libraries":{}}}"#;
+        let expected_solidity = r#"{"language":"Solidity","sources":{"source.sol":{"content":"pragma"}},"settings":{"optimizer":{"enabled":true,"runs":200},"outputSelection":{"*":{"":["*"],"*":["*"]}},"evmVersion":"london","libraries":{}}}"#;
+        let expected_yul = r#"{"language":"Yul","sources":{".yul":{"content":"object \"A\" {}"},"source2.yul":{"content":"object \"A\" {}"}},"settings":{"optimizer":{"enabled":true,"runs":200},"outputSelection":{"*":{"":["*"],"*":["*"]}},"evmVersion":"london","libraries":{}}}"#;
         test_to_input(multi_part, vec![expected_solidity, expected_yul]);
     }
 }

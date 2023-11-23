@@ -1,21 +1,22 @@
 #![allow(dead_code)]
 
-mod database_helpers;
 pub mod smart_contract_veriifer_mock;
-mod test_input_data;
+pub mod test_input_data;
+
+pub mod verifier_alliance_types;
 
 use async_trait::async_trait;
 use blockscout_display_bytes::Bytes as DisplayBytes;
-use database_helpers::TestDbGuard;
+use blockscout_service_launcher::test_database::TestDbGuard;
 use entity::{
     bytecode_parts, bytecodes, files, parts, sea_orm_active_enums, source_files, sources,
     verified_contracts,
 };
 use eth_bytecode_db::verification::{
-    BytecodeType, Client, Error, Source, SourceType, VerificationRequest,
+    BytecodeType, Client, Error, Source, SourceType, VerificationMetadata, VerificationRequest,
 };
 use pretty_assertions::assert_eq;
-use sea_orm::{DatabaseConnection, EntityTrait};
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter};
 use smart_contract_verifier_proto::blockscout::smart_contract_verifier::v2::VerifyResponse;
 use smart_contract_veriifer_mock::SmartContractVerifierServer;
 use std::{collections::HashSet, str::FromStr, sync::Arc};
@@ -30,32 +31,38 @@ pub trait VerifierService<Request> {
 
     fn build_server(self) -> SmartContractVerifierServer;
 
-    fn generate_request(&self, id: u8) -> Request;
+    fn generate_request(
+        &self,
+        id: u8,
+        verification_metadata: Option<VerificationMetadata>,
+    ) -> Request;
 
     fn source_type(&self) -> SourceType;
 
     async fn verify(client: Client, request: Request) -> Result<Source, Error>;
 }
 
-pub fn generate_verification_request<T>(id: u8, content: T) -> VerificationRequest<T> {
+pub fn generate_verification_request<T>(
+    id: u8,
+    content: T,
+    metadata: Option<VerificationMetadata>,
+) -> VerificationRequest<T> {
     VerificationRequest {
         bytecode: DisplayBytes::from([id]).to_string(),
         bytecode_type: BytecodeType::CreationInput,
         compiler_version: "compiler_version".to_string(),
         content,
+        metadata,
+        is_authorized: false,
     }
 }
 
-async fn init_db(db_prefix: &str, test_name: &str) -> TestDbGuard {
-    #[allow(unused_variables)]
-    let db_url: Option<String> = None;
-    // Uncomment if providing url explicitly is more convenient
-    // let db_url = Some("postgres://postgres:admin@localhost:9432/".into());
+pub async fn init_db(db_prefix: &str, test_name: &str) -> TestDbGuard {
     let db_name = format!("{db_prefix}_{test_name}");
-    TestDbGuard::new(db_name.as_str(), db_url).await
+    TestDbGuard::new::<migration::Migrator>(db_name.as_str()).await
 }
 
-async fn start_server_and_init_client<Service, Request>(
+pub async fn start_server_and_init_client<Service, Request>(
     db_client: Arc<DatabaseConnection>,
     mut service: Service,
     input_data: Vec<TestInputData<Request>>,
@@ -65,8 +72,8 @@ where
 {
     // Initialize service
     for input in input_data {
-        let response = input.response.clone();
-        let request = Service::GrpcT::from(input.request);
+        let response = input.verifier_response.clone();
+        let request = Service::GrpcT::from(input.eth_bytecode_db_request);
         service.add_into_service(request, response)
     }
     // Initialize server
@@ -86,15 +93,15 @@ where
 {
     let db = init_db(db_prefix, "test_returns_valid_source").await;
     let input_data =
-        test_input_data::input_data_1(service.generate_request(1), service.source_type());
+        test_input_data::input_data_1(service.generate_request(1, None), service.source_type());
     let client =
         start_server_and_init_client(db.client().clone(), service, vec![input_data.clone()]).await;
 
-    let source = Service::verify(client, input_data.request)
+    let source = Service::verify(client, input_data.eth_bytecode_db_request)
         .await
         .expect("Verification failed");
 
-    assert_eq!(input_data.source, source, "Invalid source");
+    assert_eq!(input_data.eth_bytecode_db_source, source, "Invalid source");
 }
 
 pub async fn test_data_is_added_into_database<Service, Request>(db_prefix: &str, service: Service)
@@ -104,11 +111,11 @@ where
 {
     let source_type = service.source_type();
     let db = init_db(db_prefix, "test_data_is_added_into_database").await;
-    let input_data = test_input_data::input_data_1(service.generate_request(1), source_type);
+    let input_data = test_input_data::input_data_1(service.generate_request(1, None), source_type);
     let client =
         start_server_and_init_client(db.client().clone(), service, vec![input_data.clone()]).await;
 
-    let _source = Service::verify(client, input_data.request)
+    let _source = Service::verify(client, input_data.eth_bytecode_db_request)
         .await
         .expect("Verification failed");
 
@@ -151,6 +158,33 @@ where
         Some(serde_json::from_str::<serde_json::Value>("{ \"abi\": \"metadata\" }").unwrap()),
         db_source.abi,
         "Invalid abi"
+    );
+    assert_eq!(
+        Some(
+            serde_json::from_str::<serde_json::Value>("{\"userdoc\":{\"kind\":\"user\"}}").unwrap()
+        ),
+        db_source.compilation_artifacts,
+        "Invalid compilation artifacts"
+    );
+    assert_eq!(
+        Some(
+            serde_json::from_str::<serde_json::Value>(
+                "{\"sourceMap\":\"1:2:3:-:0;;;;;;;;;;;;;;;;;;;\"}"
+            )
+            .unwrap()
+        ),
+        db_source.creation_input_artifacts,
+        "Invalid creation input artifacts"
+    );
+    assert_eq!(
+        Some(
+            serde_json::from_str::<serde_json::Value>(
+                "{\"sourceMap\":\"10:11:12:-:0;;;;;;;;;;;;;;;;;;;\"}"
+            )
+            .unwrap()
+        ),
+        db_source.deployed_bytecode_artifacts,
+        "Invalid deployed bytecode artifacts"
     );
     assert_eq!(
         vec![0x01u8, 0x23u8, 0x45u8, 0x67u8],
@@ -291,26 +325,6 @@ where
         bytecode_parts.len()
     );
 
-    let expected_main_parts_data = HashSet::from([vec![0x01u8, 0x23u8], vec![0x89u8, 0xabu8]]);
-    assert_eq!(
-        expected_main_parts_data,
-        parts
-            .iter()
-            .filter(|part| part.part_type == sea_orm_active_enums::PartType::Main)
-            .map(|part| part.data.clone())
-            .collect::<HashSet<_>>(),
-        "Invalid data returned for main parts"
-    );
-    let expected_meta_parts_data = HashSet::from([vec![0x45u8, 0x67u8], vec![0xcdu8, 0xefu8]]);
-    assert_eq!(
-        expected_meta_parts_data,
-        parts
-            .iter()
-            .filter(|part| part.part_type == sea_orm_active_enums::PartType::Metadata)
-            .map(|part| part.data.clone())
-            .collect::<HashSet<_>>(),
-        "Invalid data returned for meta parts"
-    );
     let creation_bytecode_id = bytecodes
         .iter()
         .filter(|bytecode| {
@@ -396,7 +410,7 @@ where
 pub async fn test_historical_data_is_added_into_database<Service, Request>(
     db_prefix: &str,
     service: Service,
-    verification_settings: serde_json::Value,
+    mut verification_settings: serde_json::Value,
     verification_type: sea_orm_active_enums::VerificationType,
 ) where
     Request: Clone,
@@ -404,11 +418,11 @@ pub async fn test_historical_data_is_added_into_database<Service, Request>(
 {
     let source_type = service.source_type();
     let db = init_db(db_prefix, "test_historical_data_is_added_into_database").await;
-    let input_data = test_input_data::input_data_1(service.generate_request(1), source_type);
+    let input_data = test_input_data::input_data_1(service.generate_request(1, None), source_type);
     let client =
         start_server_and_init_client(db.client().clone(), service, vec![input_data.clone()]).await;
 
-    let _source = Service::verify(client, input_data.request)
+    let _source = Service::verify(client, input_data.eth_bytecode_db_request)
         .await
         .expect("Verification failed");
 
@@ -445,16 +459,287 @@ pub async fn test_historical_data_is_added_into_database<Service, Request>(
         verified_contract.bytecode_type,
         "Invalid bytecode type"
     );
-    println!(
-        "{}",
-        serde_json::to_string(&verified_contract.verification_settings).unwrap()
-    );
+    verification_settings
+        .as_object_mut()
+        .expect("Verification settings is not a map")
+        .insert("metadata".into(), serde_json::Value::Null);
     assert_eq!(
         verification_settings, verified_contract.verification_settings,
-        "Invalid verificaiton settings"
+        "Invalid verification settings"
     );
     assert_eq!(
         verification_type, verified_contract.verification_type,
         "Invalid verification type"
+    );
+}
+
+pub async fn test_historical_data_saves_chain_id_and_contract_address<Service, Request>(
+    db_prefix: &str,
+    service: Service,
+) where
+    Request: Clone,
+    Service: VerifierService<Request>,
+{
+    let source_type = service.source_type();
+    let db = init_db(
+        db_prefix,
+        "test_historical_data_saves_chain_id_and_contract_address",
+    )
+    .await;
+    let chain_id = 1;
+    let contract_address = bytes::Bytes::from([10u8; 20].as_ref());
+    let input_data = test_input_data::input_data_1(
+        service.generate_request(
+            1,
+            Some(VerificationMetadata {
+                chain_id: Some(chain_id),
+                contract_address: Some(contract_address.clone()),
+                transaction_hash: None,
+                block_number: None,
+                transaction_index: None,
+                deployer: None,
+                creation_code: None,
+                runtime_code: None,
+            }),
+        ),
+        source_type,
+    );
+    let client =
+        start_server_and_init_client(db.client().clone(), service, vec![input_data.clone()]).await;
+
+    let _source = Service::verify(client, input_data.eth_bytecode_db_request)
+        .await
+        .expect("Verification failed");
+
+    let db_client = db.client();
+    let db_client = db_client.as_ref();
+
+    let source_id = sources::Entity::find()
+        .one(db_client)
+        .await
+        .expect("Error while reading source")
+        .unwrap()
+        .id;
+
+    let verified_contract = verified_contracts::Entity::find()
+        .filter(verified_contracts::Column::SourceId.eq(source_id))
+        .one(db_client)
+        .await
+        .expect("Error while reading verified contracts")
+        .expect("No contract was found");
+
+    assert_eq!(
+        Some(chain_id),
+        verified_contract.chain_id,
+        "Invalid chain id saved"
+    );
+    assert_eq!(
+        Some(contract_address.to_vec()),
+        verified_contract.contract_address,
+        "Invalid contract address saved"
+    );
+}
+
+pub async fn test_verification_of_same_source_results_stored_once<Service, Request>(
+    db_prefix: &str,
+    service: Service,
+) where
+    Request: Clone,
+    Service: VerifierService<Request>,
+{
+    let source_type = service.source_type();
+    let db = init_db(
+        db_prefix,
+        "test_verification_of_same_source_results_stored_once",
+    )
+    .await;
+    let input_data = test_input_data::input_data_1(service.generate_request(1, None), source_type);
+    let client =
+        start_server_and_init_client(db.client().clone(), service, vec![input_data.clone()]).await;
+
+    let source = Service::verify(client.clone(), input_data.eth_bytecode_db_request.clone())
+        .await
+        .expect("Verification failed");
+
+    let source_2 = Service::verify(client, input_data.eth_bytecode_db_request)
+        .await
+        .expect("Duplicative verification failed");
+
+    assert_eq!(
+        source, source_2,
+        "The same requests must return the same responses"
+    );
+
+    let db_client = db.client();
+    let db_client = db_client.as_ref();
+
+    /* Assert inserted into "sources" */
+
+    let sources = sources::Entity::find()
+        .all(db_client)
+        .await
+        .expect("Error while reading source");
+    assert_eq!(
+        1,
+        sources.len(),
+        "Invalid number of sources returned. Expected 1, actual {}",
+        sources.len()
+    );
+
+    /* Assert inserted into "files" */
+
+    let files = files::Entity::find()
+        .all(db_client)
+        .await
+        .expect("Error while reading files");
+    assert_eq!(
+        2,
+        files.len(),
+        "Invalid number of files returned. Expected 2, actual {}",
+        files.len()
+    );
+
+    /* Assert inserted into "source_files" */
+
+    let source_files = source_files::Entity::find()
+        .all(db_client)
+        .await
+        .expect("Error while reading source files");
+    assert_eq!(
+        2,
+        source_files.len(),
+        "Invalid number of source files returned. Expected 2, actual {}",
+        source_files.len()
+    );
+
+    /* Assert inserted into "bytecodes" */
+
+    let bytecodes = bytecodes::Entity::find()
+        .all(db_client)
+        .await
+        .expect("Error while reading bytecodes");
+    assert_eq!(
+        2,
+        bytecodes.len(),
+        "Invalid number of bytecodes returned. Expected 2, actual {}",
+        bytecodes.len()
+    );
+
+    /* Assert inserted into parts */
+
+    let parts = parts::Entity::find()
+        .all(db_client)
+        .await
+        .expect("Error while reading parts");
+    assert_eq!(
+        4,
+        parts.len(),
+        "Invalid number of parts returned. Expected 4, actual {}",
+        parts.len()
+    );
+
+    /* Assert inserted into bytecode_parts */
+
+    let bytecode_parts = bytecode_parts::Entity::find()
+        .all(db_client)
+        .await
+        .expect("Error while reading bytecode parts");
+    assert_eq!(
+        4,
+        bytecode_parts.len(),
+        "Invalid number of bytecode parts returned. Expected 4, actual {}",
+        bytecode_parts.len()
+    );
+}
+
+pub async fn test_verification_of_updated_source_replace_the_old_result<Service, Request>(
+    db_prefix: &str,
+    service_generator: impl Fn() -> Service,
+) where
+    Request: Clone,
+    Service: VerifierService<Request>,
+{
+    let db = init_db(
+        db_prefix,
+        "test_verification_of_updated_source_replace_the_old_result",
+    )
+    .await;
+
+    {
+        let service = service_generator();
+        let source_type = service.source_type();
+        let input_data =
+            test_input_data::input_data_1(service.generate_request(1, None), source_type);
+        let client =
+            start_server_and_init_client(db.client().clone(), service, vec![input_data.clone()])
+                .await;
+        let _source = Service::verify(client.clone(), input_data.eth_bytecode_db_request.clone())
+            .await
+            .expect("Verification failed");
+    }
+
+    let updated_service = service_generator();
+    let source_type = updated_service.source_type();
+    let updated_input_data = {
+        let TestInputData {
+            eth_bytecode_db_request,
+            verifier_response: mut updated_verifier_response,
+            ..
+        } = test_input_data::input_data_1(updated_service.generate_request(1, None), source_type);
+        if let Some(source) = updated_verifier_response.source.as_mut() {
+            let mut compilation_artifacts: serde_json::Value =
+                serde_json::from_str(source.compilation_artifacts()).unwrap();
+            compilation_artifacts
+                .as_object_mut()
+                .unwrap()
+                .insert("additionalValue".to_string(), serde_json::Value::default());
+            source.compilation_artifacts = Some(compilation_artifacts.to_string());
+        }
+
+        TestInputData::from_verifier_source_and_extra_data(
+            eth_bytecode_db_request,
+            updated_verifier_response.source.unwrap(),
+            updated_verifier_response.extra_data.unwrap(),
+        )
+    };
+    let client = start_server_and_init_client(
+        db.client().clone(),
+        updated_service,
+        vec![updated_input_data.clone()],
+    )
+    .await;
+    let source = Service::verify(
+        client.clone(),
+        updated_input_data.eth_bytecode_db_request.clone(),
+    )
+    .await
+    .expect("Verification failed");
+
+    assert_eq!(
+        updated_input_data.eth_bytecode_db_source, source,
+        "Invalid source"
+    );
+
+    let db_client = db.client();
+    let db_client_ref = db_client.as_ref();
+
+    /* Assert inserted into "sources" */
+
+    let db_source = sources::Entity::find()
+        .one(db_client_ref)
+        .await
+        .expect("Error while reading source")
+        .expect("No sources when there should be one");
+
+    assert_eq!(
+        updated_input_data
+            .verifier_response
+            .source
+            .unwrap()
+            .compilation_artifacts
+            .as_ref()
+            .map(|v| serde_json::from_str(v).unwrap()),
+        db_source.compilation_artifacts,
+        "Invalid compilation artifacts"
     );
 }

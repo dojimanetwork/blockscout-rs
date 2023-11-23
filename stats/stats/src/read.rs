@@ -1,4 +1,4 @@
-use crate::charts::insert::DateValue;
+use crate::{charts::insert::DateValue, missing_date::get_and_fill_chart, MissingDatePolicy};
 use chrono::NaiveDate;
 use entity::{chart_data, charts};
 use sea_orm::{
@@ -19,14 +19,17 @@ pub enum ReadError {
 #[derive(Debug, FromQueryResult)]
 struct CounterData {
     name: String,
+    date: NaiveDate,
     value: String,
 }
 
-pub async fn get_counters(db: &DatabaseConnection) -> Result<HashMap<String, String>, ReadError> {
+pub async fn get_counters(
+    db: &DatabaseConnection,
+) -> Result<HashMap<String, DateValue>, ReadError> {
     let data = CounterData::find_by_statement(Statement::from_string(
         DbBackend::Postgres,
         r#"
-            SELECT distinct on (charts.id) charts.name, data.value
+            SELECT distinct on (charts.id) charts.name, data.date, data.value
             FROM "chart_data" "data"
             INNER JOIN "charts"
                 ON data.chart_id = charts.id
@@ -40,7 +43,15 @@ pub async fn get_counters(db: &DatabaseConnection) -> Result<HashMap<String, Str
 
     let counters: HashMap<_, _> = data
         .into_iter()
-        .map(|data| (data.name, data.value))
+        .map(|data| {
+            (
+                data.name,
+                DateValue {
+                    date: data.date,
+                    value: data.value,
+                },
+            )
+        })
         .collect();
 
     Ok(counters)
@@ -51,6 +62,7 @@ pub async fn get_chart_data(
     name: &str,
     from: Option<NaiveDate>,
     to: Option<NaiveDate>,
+    policy: Option<MissingDatePolicy>,
 ) -> Result<Vec<DateValue>, ReadError> {
     let chart = charts::Entity::find()
         .column(charts::Column::Id)
@@ -59,8 +71,11 @@ pub async fn get_chart_data(
         .await?
         .ok_or_else(|| ReadError::NotFound(name.into()))?;
 
-    let chart = get_chart(db, chart.id, from, to).await?;
-    Ok(chart)
+    let data = match policy {
+        Some(policy) => get_and_fill_chart(db, chart.id, from, to, policy).await?,
+        None => get_chart(db, chart.id, from, to).await?,
+    };
+    Ok(data)
 }
 
 async fn get_chart(
@@ -135,16 +150,23 @@ mod tests {
         .unwrap();
     }
 
+    fn value(date: &str, value: &str) -> DateValue {
+        DateValue {
+            date: NaiveDate::from_str(date).unwrap(),
+            value: value.to_string(),
+        }
+    }
+
     #[tokio::test]
     #[ignore = "needs database to run"]
     async fn get_counters_mock() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let db = init_db::<migration::Migrator>("get_counters_mock", None).await;
+        let db = init_db("get_counters_mock").await;
         insert_mock_data(&db).await;
         let counters = get_counters(&db).await.unwrap();
         assert_eq!(
-            HashMap::from_iter([("totalBlocks".into(), "1350".into())]),
+            HashMap::from_iter([("totalBlocks".into(), value("2022-11-12", "1350"))]),
             counters
         );
     }
@@ -154,9 +176,9 @@ mod tests {
     async fn get_chart_int_mock() {
         let _ = tracing_subscriber::fmt::try_init();
 
-        let db = init_db::<migration::Migrator>("get_chart_int_mock", None).await;
+        let db = init_db("get_chart_int_mock").await;
         insert_mock_data(&db).await;
-        let chart = get_chart_data(&db, "newBlocksPerDay", None, None)
+        let chart = get_chart_data(&db, "newBlocksPerDay", None, None, None)
             .await
             .unwrap();
         assert_eq!(

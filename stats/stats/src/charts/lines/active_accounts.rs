@@ -25,7 +25,10 @@ impl ChartPartialUpdater for ActiveAccounts {
                     COUNT(DISTINCT from_address_hash)::TEXT as value
                 FROM transactions 
                 JOIN blocks on transactions.block_hash = blocks.hash
-                WHERE date(blocks.timestamp) > $1 AND blocks.consensus = true
+                WHERE 
+                    blocks.timestamp != to_timestamp(0) AND
+                    date(blocks.timestamp) > $1 AND
+                    blocks.consensus = true
                 GROUP BY date(blocks.timestamp);
                 "#,
                 vec![row.date.into()],
@@ -38,7 +41,9 @@ impl ChartPartialUpdater for ActiveAccounts {
                     COUNT(DISTINCT from_address_hash)::TEXT as value
                 FROM transactions 
                 JOIN blocks on transactions.block_hash = blocks.hash
-                WHERE blocks.consensus = true
+                WHERE 
+                    blocks.timestamp != to_timestamp(0) AND
+                    blocks.consensus = true
                 GROUP BY date(blocks.timestamp);
                 "#,
                 vec![],
@@ -87,9 +92,13 @@ mod tests {
             chart,
             vec![
                 ("2022-11-09", "1"),
-                ("2022-11-10", "2"),
-                ("2022-11-11", "2"),
+                ("2022-11-10", "3"),
+                ("2022-11-11", "4"),
                 ("2022-11-12", "1"),
+                ("2022-12-01", "1"),
+                ("2023-01-01", "1"),
+                ("2023-02-01", "1"),
+                ("2023-03-01", "1"),
             ],
         )
         .await;

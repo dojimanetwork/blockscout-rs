@@ -1,5 +1,6 @@
+use super::artifacts::CompilerInput;
 use crate::compiler::{EvmCompiler, Version};
-use ethers_solc::{error::SolcError, CompilerInput, CompilerOutput, Solc};
+use ethers_solc::{error::SolcError, CompilerOutput, Solc};
 use std::path::Path;
 
 #[derive(Default)]
@@ -13,14 +14,20 @@ impl VyperCompiler {
 
 #[async_trait::async_trait]
 impl EvmCompiler for VyperCompiler {
+    type CompilerInput = CompilerInput;
+
     async fn compile(
         &self,
         path: &Path,
         _ver: &Version,
-        input: &CompilerInput,
-    ) -> Result<CompilerOutput, SolcError> {
-        let vyper_output: types::VyperCompilerOutput = Solc::from(path).compile_as(input)?;
-        Ok(CompilerOutput::from(vyper_output))
+        input: &Self::CompilerInput,
+    ) -> Result<(serde_json::Value, CompilerOutput), SolcError> {
+        let raw = Solc::from(path).async_compile_output(input).await?;
+        let vyper_output: types::VyperCompilerOutput = serde_json::from_slice(&raw)?;
+        Ok((
+            serde_json::from_slice(&raw)?,
+            CompilerOutput::from(vyper_output),
+        ))
     }
 }
 
@@ -28,7 +35,7 @@ mod types {
     use std::collections::BTreeMap;
 
     use ethers_solc::{
-        artifacts::{Contract, Error, Severity},
+        artifacts::{Contract, Error, Severity, SourceFile},
         CompilerOutput,
     };
     use serde::{Deserialize, Serialize};
@@ -54,6 +61,8 @@ mod types {
         pub errors: Vec<VyperError>,
         #[serde(default)]
         pub contracts: BTreeMap<String, BTreeMap<String, Contract>>,
+        #[serde(default)]
+        pub sources: BTreeMap<String, SourceFile>,
     }
 
     impl From<VyperCompilerOutput> for CompilerOutput {
@@ -74,7 +83,7 @@ mod types {
                 .collect();
             CompilerOutput {
                 errors,
-                sources: BTreeMap::new(),
+                sources: vyper.sources,
                 contracts: vyper.contracts,
             }
         }
@@ -88,9 +97,10 @@ mod tests {
         compiler::{self, Compilers, ListFetcher},
         consts::DEFAULT_VYPER_COMPILER_LIST,
     };
-    use ethers_solc::{artifacts::Source, CompilerInput};
+    use ethers_solc::artifacts::Source;
     use std::{
         collections::{BTreeMap, HashSet},
+        env::temp_dir,
         path::PathBuf,
         str::FromStr,
         sync::Arc,
@@ -102,7 +112,7 @@ mod tests {
         COMPILERS
             .get_or_init(|| async {
                 let url = DEFAULT_VYPER_COMPILER_LIST.try_into().expect("Getting url");
-                let fetcher = ListFetcher::new(url, PathBuf::from("compilers"), None, None)
+                let fetcher = ListFetcher::new(url, temp_dir(), None, None)
                     .await
                     .expect("Fetch releases");
                 let threads_semaphore = Arc::new(Semaphore::new(4));
@@ -116,8 +126,9 @@ mod tests {
             language: "Vyper".to_string(),
             sources: sources
                 .into_iter()
-                .map(|(name, content)| (name, Source { content }))
+                .map(|(name, content)| (name, Source::new(content)))
                 .collect(),
+            interfaces: Default::default(),
             settings: Default::default(),
         };
         compiler_input.settings.evm_version = None;
@@ -150,15 +161,15 @@ def getUserName() -> String[100]:
         let version =
             compiler::Version::from_str("0.3.6+commit.4a2124d0").expect("Compiler version");
 
-        let result = compilers
-            .compile(&version, &input)
+        let (_raw, result) = compilers
+            .compile(&version, &input, None)
             .await
             .expect("Compilation failed");
         let contracts: HashSet<String> =
             result.contracts_into_iter().map(|(name, _)| name).collect();
         assert_eq!(
             contracts,
-            HashSet::from_iter(vec!["source".into()]),
+            HashSet::from_iter(["source".into()]),
             "compilation output should contain 1 contract",
         )
     }
@@ -169,16 +180,16 @@ def getUserName() -> String[100]:
         let version =
             compiler::Version::from_str("v0.2.11+commit.5db35ef").expect("Compiler version");
 
-        for sources in vec![
-            BTreeMap::from_iter(vec![("source.vy".into(), "some wrong vyper code".into())]),
-            BTreeMap::from_iter(vec![(
+        for sources in [
+            BTreeMap::from_iter([("source.vy".into(), "some wrong vyper code".into())]),
+            BTreeMap::from_iter([(
                 "source.vy".into(),
                 "\n\n# @version =0.3.1\n\n# wrong vyper version".into(),
             )]),
         ] {
             let input = input_with_sources(sources);
             let _ = compilers
-                .compile(&version, &input)
+                .compile(&version, &input, None)
                 .await
                 .expect_err("Compilation should fail");
         }

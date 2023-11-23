@@ -6,7 +6,7 @@ use crate::{
         insert::DateValue,
         updater::{parse_and_growth, ChartDependentUpdater},
     },
-    UpdateError,
+    MissingDatePolicy, UpdateError,
 };
 use async_trait::async_trait;
 use entity::sea_orm_active_enums::ChartType;
@@ -40,9 +40,14 @@ impl crate::Chart for TxnsGrowth {
     fn name(&self) -> &str {
         "txnsGrowth"
     }
-
     fn chart_type(&self) -> ChartType {
         ChartType::Line
+    }
+    fn missing_date_policy(&self) -> MissingDatePolicy {
+        MissingDatePolicy::FillPrevious
+    }
+    fn drop_last_point(&self) -> bool {
+        false
     }
 
     async fn create(&self, db: &DatabaseConnection) -> Result<(), DbErr> {
@@ -75,10 +80,14 @@ mod tests {
             "update_txns_growth",
             chart,
             vec![
-                ("2022-11-09", "3"),
-                ("2022-11-10", "9"),
-                ("2022-11-11", "15"),
-                ("2022-11-12", "16"),
+                ("2022-11-09", "5"),
+                ("2022-11-10", "17"),
+                ("2022-11-11", "31"),
+                ("2022-11-12", "36"),
+                ("2022-12-01", "41"),
+                ("2023-01-01", "42"),
+                ("2023-02-01", "46"),
+                ("2023-03-01", "47"),
             ],
         )
         .await;

@@ -26,6 +26,7 @@ impl ChartPartialUpdater for NewTxns {
                 FROM transactions t
                 JOIN blocks       b ON t.block_hash = b.hash
                 WHERE 
+                    b.timestamp != to_timestamp(0) AND
                     date(b.timestamp) > $1 AND 
                     b.consensus = true
                 GROUP BY date;
@@ -40,7 +41,9 @@ impl ChartPartialUpdater for NewTxns {
                     COUNT(*)::TEXT as value
                 FROM transactions t
                 JOIN blocks       b ON t.block_hash = b.hash
-                WHERE b.consensus = true
+                WHERE
+                    b.timestamp != to_timestamp(0) AND 
+                    b.consensus = true
                 GROUP BY date;
                 "#,
                 vec![],
@@ -78,7 +81,7 @@ impl crate::Chart for NewTxns {
 #[cfg(test)]
 mod tests {
     use super::NewTxns;
-    use crate::tests::simple_test::simple_test_chart;
+    use crate::tests::simple_test::{ranged_test_chart, simple_test_chart};
 
     #[tokio::test]
     #[ignore = "needs database to run"]
@@ -88,11 +91,54 @@ mod tests {
             "update_new_txns",
             chart,
             vec![
-                ("2022-11-09", "3"),
-                ("2022-11-10", "6"),
-                ("2022-11-11", "6"),
-                ("2022-11-12", "1"),
+                ("2022-11-09", "5"),
+                ("2022-11-10", "12"),
+                ("2022-11-11", "14"),
+                ("2022-11-12", "5"),
+                ("2022-12-01", "5"),
+                ("2023-01-01", "1"),
+                ("2023-02-01", "4"),
+                ("2023-03-01", "1"),
             ],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    #[ignore = "needs database to run"]
+    async fn ranged_update_new_txns() {
+        let chart = NewTxns::default();
+        ranged_test_chart(
+            "ranged_update_new_txns",
+            chart,
+            vec![
+                ("2022-11-08", "0"),
+                ("2022-11-09", "5"),
+                ("2022-11-10", "12"),
+                ("2022-11-11", "14"),
+                ("2022-11-12", "5"),
+                ("2022-11-13", "0"),
+                ("2022-11-14", "0"),
+                ("2022-11-15", "0"),
+                ("2022-11-16", "0"),
+                ("2022-11-17", "0"),
+                ("2022-11-18", "0"),
+                ("2022-11-19", "0"),
+                ("2022-11-20", "0"),
+                ("2022-11-21", "0"),
+                ("2022-11-22", "0"),
+                ("2022-11-23", "0"),
+                ("2022-11-24", "0"),
+                ("2022-11-25", "0"),
+                ("2022-11-26", "0"),
+                ("2022-11-27", "0"),
+                ("2022-11-28", "0"),
+                ("2022-11-29", "0"),
+                ("2022-11-30", "0"),
+                ("2022-12-01", "5"),
+            ],
+            "2022-11-08".parse().unwrap(),
+            "2022-12-01".parse().unwrap(),
         )
         .await;
     }

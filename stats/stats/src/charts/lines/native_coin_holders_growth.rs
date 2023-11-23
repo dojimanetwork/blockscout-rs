@@ -1,6 +1,6 @@
 use crate::{
     charts::{insert::DateValue, updater::ChartPartialUpdater},
-    UpdateError,
+    MissingDatePolicy, UpdateError,
 };
 use async_trait::async_trait;
 use entity::sea_orm_active_enums::ChartType;
@@ -20,25 +20,25 @@ impl ChartPartialUpdater for NativeCoinHoldersGrowth {
             Some(row) => Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"
-                        SELECT 
-                            day as date,
-                            count(*)::TEXT as value
-                        FROM address_coin_balances_daily
-                        WHERE value != 0 AND day > $1
-                        GROUP BY day;
-                    "#,
+                    SELECT 
+                        day as date,
+                        count(*)::TEXT as value
+                    FROM address_coin_balances_daily
+                    WHERE value != 0 AND day > $1 AND day != to_timestamp(0)
+                    GROUP BY day;
+                "#,
                 vec![row.date.into()],
             ),
             None => Statement::from_sql_and_values(
                 DbBackend::Postgres,
                 r#"
-                        SELECT 
-                            day as date,
-                            count(*)::TEXT as value
-                        FROM address_coin_balances_daily
-                        WHERE value != 0
-                        GROUP BY day;
-                    "#,
+                    SELECT 
+                        day as date,
+                        count(*)::TEXT as value
+                    FROM address_coin_balances_daily
+                    WHERE value != 0 AND day != to_timestamp(0)
+                    GROUP BY day;
+                "#,
                 vec![],
             ),
         };
@@ -56,9 +56,14 @@ impl crate::Chart for NativeCoinHoldersGrowth {
     fn name(&self) -> &str {
         "nativeCoinHoldersGrowth"
     }
-
     fn chart_type(&self) -> ChartType {
         ChartType::Line
+    }
+    fn missing_date_policy(&self) -> MissingDatePolicy {
+        MissingDatePolicy::FillPrevious
+    }
+    fn drop_last_point(&self) -> bool {
+        false
     }
 
     async fn update(
@@ -85,9 +90,9 @@ mod tests {
             "update_native_coin_holders_growth",
             chart,
             vec![
-                ("2022-11-09", "7"),
+                ("2022-11-09", "8"),
                 ("2022-11-10", "8"),
-                ("2022-11-11", "8"),
+                ("2022-11-11", "7"),
             ],
         )
         .await;

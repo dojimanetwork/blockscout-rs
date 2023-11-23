@@ -1,7 +1,7 @@
-use super::client::Client;
+use super::{client::Client, types::Success};
 use crate::{
     compiler::Version,
-    verifier::{ContractVerifier, Error, Success},
+    verifier::{ContractVerifier, Error},
 };
 use bytes::Bytes;
 use ethers_solc::{artifacts::output_selection::OutputSelection, CompilerInput};
@@ -13,6 +13,10 @@ pub struct VerificationRequest {
     pub compiler_version: Version,
 
     pub content: StandardJsonContent,
+
+    // Required for the metrics. Has no functional meaning.
+    // In case if chain_id has not been provided, results in empty string.
+    pub chain_id: Option<String>,
 }
 
 pub struct StandardJsonContent {
@@ -25,7 +29,7 @@ impl From<StandardJsonContent> for CompilerInput {
 
         // always overwrite output selection as it customizes what compiler outputs and
         // is not what is returned to the user, but only used internally by our service
-        let output_selection = OutputSelection::default_output_selection();
+        let output_selection = OutputSelection::complete_output_selection();
         input.settings.output_selection = output_selection;
 
         input
@@ -39,13 +43,15 @@ pub async fn verify(client: Arc<Client>, request: VerificationRequest) -> Result
         &request.compiler_version,
         request.creation_bytecode,
         request.deployed_bytecode,
+        request.chain_id,
     )?;
-    let result = verifier.verify(&compiler_input).await;
+    let result = verifier.verify(&compiler_input).await?;
 
     // If case of success, we allow middlewares to process success and only then return it to the caller
-    let success = result?;
+    let success = Success::from((compiler_input, result));
     if let Some(middleware) = client.middleware() {
         middleware.call(&success).await;
     }
+
     Ok(success)
 }

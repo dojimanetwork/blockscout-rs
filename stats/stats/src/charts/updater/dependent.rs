@@ -31,8 +31,8 @@ where
             parent_chart_name = parent.name(),
             "updating parent"
         );
-        parent.update(db, blockscout, force_full).await?;
-        let data = get_chart_data(db, parent.name(), None, None).await?;
+        parent.update_with_mutex(db, blockscout, force_full).await?;
+        let data = get_chart_data(db, parent.name(), None, None, None).await?;
         Ok(data)
     }
 
@@ -86,7 +86,7 @@ pub fn parse_and_sum<T>(
     data: Vec<DateValue>,
     chart_name: &str,
     parent_name: &str,
-) -> Result<Vec<DateValue>, UpdateError>
+) -> Result<Option<DateValue>, UpdateError>
 where
     T: Sum + FromStr + Default + Display,
     T::Err: Display,
@@ -99,7 +99,7 @@ where
                 parent_chart_name = parent_name,
                 "parent doesn't have any data after update"
             );
-            return Ok(vec![]);
+            return Ok(None);
         }
     };
     let total: T = data
@@ -117,5 +117,9 @@ where
         date: max_date,
         value: total.to_string(),
     };
-    Ok(vec![point])
+    Ok(Some(point))
+}
+
+pub fn last_point(data: Vec<DateValue>) -> Option<DateValue> {
+    data.into_iter().max()
 }

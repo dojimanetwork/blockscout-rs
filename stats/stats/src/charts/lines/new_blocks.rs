@@ -22,7 +22,10 @@ impl ChartPartialUpdater for NewBlocks {
                 r#"
                     SELECT date(blocks.timestamp) as date, COUNT(*)::TEXT as value
                         FROM public.blocks
-                        WHERE date(blocks.timestamp) > $1 AND consensus = true
+                        WHERE 
+                            blocks.timestamp != to_timestamp(0) AND
+                            date(blocks.timestamp) > $1 AND
+                            consensus = true
                         GROUP BY date;
                     "#,
                 vec![row.date.into()],
@@ -32,7 +35,9 @@ impl ChartPartialUpdater for NewBlocks {
                 r#"
                     SELECT date(blocks.timestamp) as date, COUNT(*)::TEXT as value
                         FROM public.blocks
-                        WHERE consensus = true
+                        WHERE 
+                            blocks.timestamp != to_timestamp(0) AND 
+                            consensus = true
                         GROUP BY date;
                     "#
                 .into(),
@@ -85,7 +90,7 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_new_blocks_recurrent() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (db, blockscout) = init_db_all("update_new_blocks_recurrent", None).await;
+        let (db, blockscout) = init_db_all("update_new_blocks_recurrent").await;
         fill_mock_blockscout_data(&blockscout, "2022-11-12").await;
 
         let updater = NewBlocks::default();
@@ -109,13 +114,13 @@ mod tests {
                 ..Default::default()
             },
         ])
-        .exec(&db)
+        .exec(&db as &DatabaseConnection)
         .await
         .unwrap();
 
         // Note that update is not full, therefore there is no entry with date `2022-11-09`
         updater.update(&db, &blockscout, false).await.unwrap();
-        let data = get_chart_data(&db, updater.name(), None, None)
+        let data = get_chart_data(&db, updater.name(), None, None, None)
             .await
             .unwrap();
         let expected = vec![
@@ -136,7 +141,7 @@ mod tests {
 
         // note that update is full, therefore there is entry with date `2022-11-09`
         updater.update(&db, &blockscout, true).await.unwrap();
-        let data = get_chart_data(&db, updater.name(), None, None)
+        let data = get_chart_data(&db, updater.name(), None, None, None)
             .await
             .unwrap();
         let expected = vec![
@@ -164,14 +169,14 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_new_blocks_fresh() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (db, blockscout) = init_db_all("update_new_blocks_fresh", None).await;
+        let (db, blockscout) = init_db_all("update_new_blocks_fresh").await;
         fill_mock_blockscout_data(&blockscout, "2022-11-12").await;
 
         let updater = NewBlocks::default();
         updater.create(&db).await.unwrap();
 
         updater.update(&db, &blockscout, true).await.unwrap();
-        let data = get_chart_data(&db, updater.name(), None, None)
+        let data = get_chart_data(&db, updater.name(), None, None, None)
             .await
             .unwrap();
         let expected = vec![
@@ -199,7 +204,7 @@ mod tests {
     #[ignore = "needs database to run"]
     async fn update_new_blocks_last() {
         let _ = tracing_subscriber::fmt::try_init();
-        let (db, blockscout) = init_db_all("update_new_blocks_last", None).await;
+        let (db, blockscout) = init_db_all("update_new_blocks_last").await;
         fill_mock_blockscout_data(&blockscout, "2022-11-12").await;
 
         let updater = NewBlocks::default();
@@ -238,12 +243,12 @@ mod tests {
                 ..Default::default()
             },
         ])
-        .exec(&db)
+        .exec(&db as &DatabaseConnection)
         .await
         .unwrap();
 
         updater.update(&db, &blockscout, false).await.unwrap();
-        let data = get_chart_data(&db, updater.name(), None, None)
+        let data = get_chart_data(&db, updater.name(), None, None, None)
             .await
             .unwrap();
         let expected = vec![

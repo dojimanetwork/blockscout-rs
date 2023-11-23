@@ -1,9 +1,9 @@
 use crate::proto::{
-    verify_response::{ExtraData, Status},
+    verify_response::{ExtraData, PostActionResponses, Status},
     Source, VerifyResponse,
 };
 use serde::{Deserialize, Serialize};
-use smart_contract_verifier::{SourcifySuccess, VerificationSuccess};
+use smart_contract_verifier::{SoliditySuccess, SourcifySuccess, VyperSuccess};
 use std::{fmt::Display, mem, ops::Deref};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -33,9 +33,9 @@ pub trait VerifyResponseOk {
     fn result(self) -> (Source, ExtraData);
 }
 
-impl VerifyResponseOk for VerificationSuccess {
-    fn result(mut self) -> (Source, ExtraData) {
-        let local_bytecode_parts = mem::take(&mut self.local_bytecode_parts);
+macro_rules! extract_extra_data {
+    ( $value:expr ) => {{
+        let local_bytecode_parts = mem::take(&mut $value.local_bytecode_parts);
         let local_creation_input_parts = local_bytecode_parts
             .creation_tx_input_parts
             .into_iter()
@@ -46,12 +46,26 @@ impl VerifyResponseOk for VerificationSuccess {
             .into_iter()
             .map(|part| extra_data::bytecode_part::BytecodePartWrapper::from(part).into_inner())
             .collect();
-        let extra_data = ExtraData {
+        ExtraData {
             local_creation_input_parts,
             local_deployed_bytecode_parts,
-        };
+        }
+    }};
+}
 
-        let source = super::source::from_verification_success(self);
+impl VerifyResponseOk for SoliditySuccess {
+    fn result(mut self) -> (Source, ExtraData) {
+        let extra_data = extract_extra_data!(self);
+        let source = super::source::from_solidity_success(self);
+
+        (source, extra_data)
+    }
+}
+
+impl VerifyResponseOk for VyperSuccess {
+    fn result(mut self) -> (Source, ExtraData) {
+        let extra_data = extract_extra_data!(self);
+        let source = super::source::from_vyper_success(self);
 
         (source, extra_data)
     }
@@ -77,6 +91,9 @@ impl VerifyResponseWrapper {
             status: Status::Success.into(),
             source: Some(source),
             extra_data: Some(extra_data),
+            post_action_responses: Some(PostActionResponses {
+                lookup_methods: None,
+            }),
         }
         .into()
     }
@@ -87,6 +104,7 @@ impl VerifyResponseWrapper {
             status: Status::Failure.into(),
             source: None,
             extra_data: None,
+            post_action_responses: None,
         }
         .into()
     }
@@ -148,12 +166,12 @@ mod tests {
     use blockscout_display_bytes::Bytes as DisplayBytes;
     use ethers_solc::CompilerInput;
     use pretty_assertions::assert_eq;
-    use smart_contract_verifier::{MatchType, VerificationSuccess, Version};
+    use smart_contract_verifier::{MatchType, SoliditySuccess, Version};
     use std::str::FromStr;
 
     #[test]
     fn ok_verify_response() {
-        let verification_success = VerificationSuccess {
+        let verification_success = SoliditySuccess {
             compiler_input: CompilerInput {
                 language: "Solidity".to_string(),
                 sources: Default::default(),
@@ -167,6 +185,9 @@ mod tests {
             constructor_args: None,
             local_bytecode_parts: Default::default(),
             match_type: MatchType::Partial,
+            compilation_artifacts: Default::default(),
+            creation_input_artifacts: Default::default(),
+            deployed_bytecode_artifacts: Default::default(),
         };
 
         let response = VerifyResponseWrapper::ok(verification_success.clone()).into_inner();
@@ -174,12 +195,15 @@ mod tests {
         let expected = VerifyResponse {
             message: "OK".to_string(),
             status: Status::Success.into(),
-            source: Some(super::super::source::from_verification_success(
+            source: Some(super::super::source::from_solidity_success(
                 verification_success,
             )),
             extra_data: Some(ExtraData {
                 local_creation_input_parts: vec![],
                 local_deployed_bytecode_parts: vec![],
+            }),
+            post_action_responses: Some(PostActionResponses {
+                lookup_methods: None,
             }),
         };
 
@@ -194,6 +218,7 @@ mod tests {
             status: Status::Failure.into(),
             source: None,
             extra_data: None,
+            post_action_responses: None,
         };
         assert_eq!(expected, response);
     }
